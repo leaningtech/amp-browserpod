@@ -3,8 +3,8 @@
 Runs [amp](https://amp.rs) 0.7.1, a modal terminal editor written in Rust, inside
 a browser tab. amp is cross compiled to `wasm32-browserpod-linux-musl` and
 executed in a Pod. The terminal fills the page and is styled by amp's own website
-stylesheet. bash sits in a panel behind the toggle at the bottom right, attached
-to the same Pod, so the two share one filesystem.
+stylesheet. bash lives in a panel below it, opened by the bar along the bottom
+edge, attached to the same Pod, so the two share one filesystem.
 
 This is not a port. It is the editor as published, apart from two changes to its
 source, both set out below.
@@ -26,6 +26,20 @@ npm run dev
 again before it can reach the page.
 
 Vite binds IPv6 here, so `localhost` works where `127.0.0.1` may not.
+
+## Deploying
+
+Build command `npm run build`, output directory `dist`. Nothing else.
+
+`build` deliberately does not compile amp. `public/amp` is committed, so a deploy
+needs no rustup, no browserpod toolchain, no llvm and no cmake. The consequence is
+that rebuilding amp is a local step whose result has to be committed, and a stale
+`public/amp` will deploy silently.
+
+`public/_headers` carries the cross origin isolation headers for Cloudflare Pages.
+The `server` and `preview` blocks in `vite.config.js` only apply to local runs, so
+without that file the deployed Pod cannot boot. Any other host needs the same two
+headers set its own way.
 
 ## Toolchain
 
@@ -122,9 +136,13 @@ When the 100ms elapses with a partial still pending, `flush_key` resolves a bare
 The markup mirrors `_terminal.html.erb` from amp's website, so amp sits in the
 same `div.terminal`, `div.title-bar`, `div.content` structure.
 `src/vendor/amp-website/` holds `base.css.scss` and `terminal.css.scss` copied
-from `amp-website/source/stylesheets/` verbatim and unmodified, and
-`src/styles.scss` pulls them in with `@use`. Everything added on top of them is
-layout, so the terminal fills the viewport rather than sitting on a white page.
+from amp's website repository verbatim and unmodified, and `src/styles.scss` pulls
+them in with `@use`. Everything added on top of them is layout, so the terminal
+fills the viewport rather than sitting on a white page.
+
+Fira Mono is served locally from `public/fonts/`, in regular and bold, latin and
+latin-ext. It was originally linked from Google, which made the terminal's
+geometry depend on a network fetch.
 
 The font and the palette are read back out of those stylesheets at runtime rather
 than retyped. `typeFrom` measures a throwaway `pre` inside `.terminal` to pick up
@@ -132,13 +150,28 @@ than retyped. `typeFrom` measures a throwaway `pre` inside `.terminal` to pick u
 `--base03`, `--yellow` and the rest off the element. Change a value in the
 stylesheet and the terminal follows.
 
-That measurement waits on `document.fonts.load`, not `document.fonts.ready`. The
-latter only waits for fonts already in use, so if nothing has asked for Fira Mono
-yet it resolves immediately and hands back fallback metrics. The difference showed
-up as 247 columns instead of 323.
+That measurement waits on `document.fonts.load` with the family alone and no
+fallback in the string. Generic families are always satisfied, so passing the
+computed value returns without ever waiting for Fira Mono.
+
+**The painted font has to be forced to match.** `styles.scss` sets `13px` and
+`"Fira Mono", monospace` on `.xterm` and `.xterm-rows` directly. The values passed
+to the `Terminal` constructor do not reach the element, which resolves to the page
+body font at 16px instead. `CharSizeService` sizes the grid from an
+`OffscreenCanvas` using the constructor options, so without that CSS the grid is
+measured at 13px Fira Mono and painted at 16px monospace. The two differ by about
+25 percent, and a centred line lands roughly 34 columns right of centre.
 
 bash shares none of this on purpose. Its frame uses `shell`, `shell-bar` and
 `shell-body`, so no rule from amp's stylesheet reaches it.
+
+`.shell-bar` is itself the button that opens the panel, carrying the BrowserPod
+mark rather than a label. The mark is a CSS mask, so only the alpha of
+`bp-logo2.svg` is used and its green never reaches the page.
+
+`#amp-terminal` is `calc(100vh - 31px)` so that bar has its own strip and does not
+cover amp's status line. The 31px is the bar's height, its 22px mark plus 4px of
+padding either side plus a 1px border, and nothing ties the two numbers together.
 
 ### Syntax colours
 
@@ -206,9 +239,10 @@ silent or misleading on all four.
 
 - **Cross origin isolation.** BrowserPod needs `SharedArrayBuffer`, which
   requires `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: require-corp`. Both are set for `dev` and
-  `preview` in `vite.config.js`. Whatever serves `dist/` needs them too, over
-  HTTPS, since localhost is the only origin granted isolation without TLS.
+  `Cross-Origin-Embedder-Policy: require-corp`. `vite.config.js` covers `dev` and
+  `preview`, and `public/_headers` covers Cloudflare Pages. Any other host needs
+  them set its own way, over HTTPS, since localhost is the only origin granted
+  isolation without TLS.
 - **Runtime and toolchain versions must match.** `@leaningtech/browserpod` is a
   375 byte shim that imports `https://rt.browserpod.io/<version>/browserpod.js`.
   The installed 3.0.1 pairs with the `browserpod-3.0.1` toolchain that built the
